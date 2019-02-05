@@ -62,10 +62,14 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         image_0_255 = (image_0 * 255.0).astype(np.uint8)
         image_1_255 = (image_1 * 255.0).astype(np.uint8)
         cur_points, status, err = cv2.calcOpticalFlowPyrLK(image_0_255, image_1_255, points, None, **lk_params)
+        points_rev, _, _ = cv2.calcOpticalFlowPyrLK(image_1_255, image_0_255, cur_points, None, **lk_params)
 
         status = status[:, 0]
         err = err[:, 0]
-        status[err > np.median(err) * 3.0] = 0
+        dist_rev = np.sqrt(np.sum((points - points_rev) ** 2, axis=2)[:,0])
+        points = points[status == 1]
+        status[dist_rev >= 2.0] = 0
+        status[err >= np.median(err) * 4.0] = 0
 
         for i in range(1, len(points)):
             point = cur_points[i]
