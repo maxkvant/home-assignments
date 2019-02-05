@@ -37,7 +37,7 @@ class _CornerStorageBuilder:
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
     image_0 = frame_sequence[0]
-    size_default = 40
+    size_default = 20
 
     def get_features(image):
         return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.1, minDistance=size_default)
@@ -59,14 +59,23 @@ def _build_impl(frame_sequence: pims.FramesSequence,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
-        cur_points, status, err = cv2.calcOpticalFlowPyrLK((image_0 * 255.0).astype(np.uint8), (image_1 * 255.0).astype(np.uint8), points, None, **lk_params)
+        image_0_255 = (image_0 * 255.0).astype(np.uint8)
+        image_1_255 = (image_1 * 255.0).astype(np.uint8)
+        cur_points, status, err = cv2.calcOpticalFlowPyrLK(image_0_255, image_1_255, points, None, **lk_params)
         status = status[:, 0]
+
+        for i in range(1, len(points)):
+            point = cur_points[i]
+            dist_2 = np.min(np.sum((cur_points[:i, :, :] - point[np.newaxis, :, :]) ** 2, axis=2))
+            if np.sqrt(dist_2) <= size_default:
+                status[i] = 0
 
         points = cur_points[status == 1, :, :]
         ids = ids[status == 1]
 
         new_points_candate = get_features(image_1)
         new_points = []
+
         for point in new_points_candate:
             dist_2 = np.min(np.sum((points - point[np.newaxis, :, :]) ** 2, axis=2))
             if np.sqrt(dist_2) > size_default:
