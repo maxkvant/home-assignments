@@ -40,7 +40,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
     size_default = 40
 
     def get_features(image):
-        return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.2, minDistance=size_default)
+        return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.1, minDistance=size_default)
 
     points = get_features(image_0)
     n = len(points)
@@ -58,21 +58,26 @@ def _build_impl(frame_sequence: pims.FramesSequence,
                      maxLevel=2,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
-
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
         cur_points, status, err = cv2.calcOpticalFlowPyrLK((image_0 * 255.0).astype(np.uint8), (image_1 * 255.0).astype(np.uint8), points, None, **lk_params)
         status = status[:, 0]
-        print((status.shape, cur_points.shape))
 
-        cur_points = cur_points[status == 1, :, :]
-        cur_ids = ids[status == 1]
+        points = cur_points[status == 1, :, :]
+        ids = ids[status == 1]
 
-        new_points = get_features(image_0)
-        new_ids = n + np.arange(len(new_points))
-        n += len(new_points)
+        new_points_candate = get_features(image_1)
+        new_points = []
+        for point in new_points_candate:
+            dist_2 = np.min(np.sum((points - point[np.newaxis, :, :]) ** 2, axis=2))
+            if np.sqrt(dist_2) > size_default:
+                new_points.append(point)
 
-        ids = np.concatenate((cur_ids, new_ids))
-        points = np.concatenate((cur_points, new_points))
+        if new_points:
+            new_points = np.asarray(new_points)
+            new_ids = n + np.arange(len(new_points))
+            n += len(new_points)
+            ids = np.concatenate((ids, new_ids))
+            points = np.concatenate((points, new_points))
 
         corners = FrameCorners(
             ids=ids,
