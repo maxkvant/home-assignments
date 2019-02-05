@@ -95,6 +95,9 @@ def _build_impl(frame_sequence: pims.FramesSequence,
             ids = np.concatenate((ids, new_ids))
             points = np.concatenate((points, new_points))
 
+        if frame & (frame - 1) == 0: #frame is power two
+            print("frame {}/{}".format(frame, len(frame_sequence)))
+
         corners = FrameCorners(
             ids=ids,
             points=np.array(points),
