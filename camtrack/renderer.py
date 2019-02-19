@@ -39,7 +39,6 @@ def _build_program_color():
         in  vec3 cur_color;
         out vec3 out_color; 
         
-        
         void main() {
             out_color = cur_color;
         }""",
@@ -69,11 +68,11 @@ def _build_program_uniform_color():
         """
         #version 140
         
-        uniform vec3 color_all;
+        uniform vec3 color;
         out     vec3 out_color;
 
         void main() {
-            out_color = color_all;
+            out_color = color;
         }""",
         GL.GL_FRAGMENT_SHADER
     )
@@ -155,19 +154,19 @@ class CameraTrackRenderer:
         cur_track_pos = self.tracked_cam_track[tracked_cam_track_pos].t_vec
 
         pyramid_near, pyramid_far = self._get_pyramid(self.tracked_cam_track[tracked_cam_track_pos])
-        print(pyramid_near)
         pyramid_left = pyramid_near[:2] + pyramid_far[:2][::-1]
         pyramid_right = pyramid_near[2:] + pyramid_far[2:][::-1]
 
         self._render(mvp, self._points_buffer, len(self.point_cloud.points), gl_fig_type=GL.GL_POINTS, color_buffer=self._point_color_buffer)
+        self._render(mvp, self._track_points, len(self.tracked_cam_track), gl_fig_type=GL.GL_LINES,
+                     color_all=(0.9, 0.9, 0.9))
 
-        self._render(mvp, _to_buffer(pyramid_near), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 1., 0.))
-        self._render(mvp, _to_buffer(pyramid_far), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 1., 0.))
-        self._render(mvp, _to_buffer(pyramid_left), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 1., 0.))
-        self._render(mvp, _to_buffer(pyramid_right), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 1., 0.))
+        self._render(mvp, _to_buffer(pyramid_near), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
+        self._render(mvp, _to_buffer(pyramid_far), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
+        self._render(mvp, _to_buffer(pyramid_left), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
+        self._render(mvp, _to_buffer(pyramid_right), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
 
-        self._render(mvp, self._track_points, len(self.tracked_cam_track),  gl_fig_type=GL.GL_LINES, color_all=(1., 1., 1.))
-        self._render(mvp, _to_buffer([cur_track_pos]), 1, gl_fig_type=GL.GL_POINTS, color_all=(0., 1., 0.))
+        self._render(mvp, _to_buffer([cur_track_pos]), 1, gl_fig_type=GL.GL_POINTS, color_all=(0., 0.9, 0.))
 
         GLUT.glutSwapBuffers()
 
@@ -202,7 +201,7 @@ class CameraTrackRenderer:
 
         return get_part(near), get_part(far)
 
-    def _render(self, mvp, position_buffer, buf_size, gl_fig_type, color_all=(0., 0., 1.), color_buffer=None):
+    def _render(self, mvp, position_buffer, buf_size, gl_fig_type, color_all=(0., 0., 0.9), color_buffer=None):
         program = self._program_color if (color_buffer is not None) else self._program_uniform_color
 
         shaders.glUseProgram(program)
@@ -220,17 +219,14 @@ class CameraTrackRenderer:
             GL.glVertexAttribPointer(color_loc, 3, GL.GL_FLOAT, False, 0, color_buffer)
         else:
             color_all = np.array(color_all, dtype=np.float32)
-            GL.glUniform3fv(
-                GL.glGetUniformLocation(program, 'color_all'),
-                1, True, color_all
-            )
+            color_loc = GL.glGetUniformLocation(program, 'color')
+            GL.glUniform3fv(color_loc, 1, color_all)
 
         position_buffer.bind()
         position_loc = GL.glGetAttribLocation(program, 'position')
         GL.glEnableVertexAttribArray(position_loc)
         GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT, False, 0,  position_buffer)
 
-        print(buf_size)
         GL.glDrawArrays(gl_fig_type, 0, buf_size)
 
         GL.glDisableVertexAttribArray(position_loc)
