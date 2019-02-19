@@ -45,6 +45,13 @@ def _build_example_program():
     )
 
 
+def _to_mat4(rot_mat, pos_vec):
+    return np.block([
+            [rot_mat, pos_vec[:,np.newaxis]],
+            [np.zeros((1, 3)), np.ones((1,1))]
+    ])
+
+
 class CameraTrackRenderer:
 
     def __init__(self,
@@ -66,6 +73,12 @@ class CameraTrackRenderer:
         self._example_buffer_object = vbo.VBO(np.array([0, 0, 0], dtype=np.float32))
 
         self._example_program = _build_example_program()
+
+        self.cam_model_files = cam_model_files
+        self.tracked_cam_parameters = tracked_cam_parameters
+        self.tracked_cam_track = tracked_cam_track
+        self.point_cloud = point_cloud
+
 
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
@@ -90,9 +103,48 @@ class CameraTrackRenderer:
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
-        self._render_example_point(np.eye(4))
+        camera_mat_4d = _to_mat4(camera_rot_mat, camera_tr_vec)
+        V = np.linalg.inv(camera_mat_4d)
+
+        object_rot, object_vec = self.tracked_cam_track[tracked_cam_track_pos]
+        M = _to_mat4(object_rot, object_vec)
+
+        coords_reverse = np.diag([-1, -1, -1, 1])
+
+        P = self._get_projection_matrix(camera_fov_y, 0.1, 100)
+
+        zero_point = np.asarray([0, 0, 0, 1])
+
+        mvp = np.dot(np.dot(np.dot(coords_reverse, P), V), M)
+        mv = np.dot(V, M)
+
+        print(camera_mat_4d)
+        print(V)
+        print(M)
+        print(mvp)
+        print(np.dot(zero_point, mv.T))
+        print(object_vec - camera_tr_vec)
+        print(np.dot(zero_point, mvp.T))
+        print()
+
+        self._render_example_point(mvp.T)
 
         GLUT.glutSwapBuffers()
+
+    @staticmethod
+    def _get_projection_matrix(fov_y, near, far):
+        w = float(GLUT.glutGet(GLUT.GLUT_WINDOW_WIDTH))
+        h = float(GLUT.glutGet(GLUT.GLUT_WINDOW_HEIGHT))
+        fov_x = fov_y / h * w  # TODO: check
+        a = - (far + near) / (far - near)
+        b = - 2 * far * near / (far - near)
+
+        return np.asarray([
+            [fov_x, 0, 0, 0],
+            [0, fov_y, 0, 0],
+            [0,    0,  a, b],
+            [0,    0, -1, 0]
+        ])
 
     def _render_example_point(self, mvp):
         shaders.glUseProgram(self._example_program)
