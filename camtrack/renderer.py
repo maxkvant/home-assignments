@@ -137,6 +137,7 @@ class CameraTrackRenderer:
             _to_buffer(pyramid_left),
             _to_buffer(pyramid_right)
         ]
+        self._track_points_buffers = [_to_buffer([track.t_vec]) for track in tracked_cam_track]
 
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
@@ -172,13 +173,10 @@ class CameraTrackRenderer:
         mvp = np.dot(np.dot(P, V), M)
 
         cur_track = self.tracked_cam_track[tracked_cam_track_pos]
-        cur_track_pos = self.tracked_cam_track[tracked_cam_track_pos].t_vec
-
-
         V_inv_pyramid = _to_mat4(cur_track.r_mat, cur_track.t_vec).astype(np.float32)
         P_pyramid = self._get_projection_matrix(self.tracked_cam_parameters.fov_y,
                                                 self.tracked_cam_parameters.aspect_ratio,
-                                                1, 25)
+                                                1, 22)
         P_inv_pyramid = np.linalg.inv(P_pyramid)
         gl2cv = np.diag([1, -1, -1, 1])
         mvp_pyramid = np.dot(mvp, np.dot(np.dot(V_inv_pyramid, gl2cv), P_inv_pyramid))
@@ -190,17 +188,16 @@ class CameraTrackRenderer:
                      color_buffer=self._point_color_buffer)
         self._render(mvp, self._track_points, len(self.tracked_cam_track), gl_fig_type=GL.GL_LINES,
                      color_all=(0.9, 0.9, 0.9))
-        self._render(mvp, _to_buffer([cur_track_pos]), 1, gl_fig_type=GL.GL_POINTS, color_all=(0., 0.9, 0.))
+        self._render(mvp, self._track_points_buffers[tracked_cam_track_pos], 1, gl_fig_type=GL.GL_POINTS, color_all=(0., 0.9, 0.))
 
         GLUT.glutSwapBuffers()
 
     @staticmethod
     def _get_projection_matrix(fov_y, aspect, near, far):
         f_y = 1. / np.tan(fov_y / 2)
-        f_x = f_y / aspect #aspect: w / h
+        f_x = f_y / aspect  # aspect: w / h
         a = - (far + near) / (far - near)
         b = - 2 * far * near / (far - near)
-        print((f_x, f_y))
 
         return np.asarray([
             [f_x, 0,   0, 0],
