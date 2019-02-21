@@ -123,6 +123,21 @@ class CameraTrackRenderer:
         self._point_color_buffer = _to_buffer(point_cloud.colors)
         self._track_points = _to_buffer([track.t_vec for track in tracked_cam_track])
 
+        face_template = [(-1, 1), (-1, -1), (1, -1), (1, 1)]
+
+        pyramid_near  = [[x, y, -1] for x, y in face_template]
+        pyramid_far   = [[x, y,  1] for x, y in face_template]
+        pyramid_left  = pyramid_near[:2] + pyramid_far[:2][::-1]
+        pyramid_right = pyramid_near[2:] + pyramid_far[2:][::-1]
+
+
+        self._pyramid_faces = [
+            _to_buffer(pyramid_near),
+            _to_buffer(pyramid_far),
+            _to_buffer(pyramid_left),
+            _to_buffer(pyramid_right)
+        ]
+
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
 
@@ -146,60 +161,53 @@ class CameraTrackRenderer:
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
+        w = float(GLUT.glutGet(GLUT.GLUT_WINDOW_WIDTH))
+        h = float(GLUT.glutGet(GLUT.GLUT_WINDOW_HEIGHT))
+        widow_aspect = w / h
+
         V = np.linalg.inv(_to_mat4(camera_rot_mat, camera_tr_vec))
         M = np.diag([1, -1, -1, 1])
-        P = self._get_projection_matrix(camera_fov_y, 0.01, 100)
+
+        P = self._get_projection_matrix(camera_fov_y, widow_aspect, 0.01, 100)
         mvp = np.dot(np.dot(P, V), M)
 
+        cur_track = self.tracked_cam_track[tracked_cam_track_pos]
         cur_track_pos = self.tracked_cam_track[tracked_cam_track_pos].t_vec
 
-        pyramid_near, pyramid_far = self._get_pyramid(self.tracked_cam_track[tracked_cam_track_pos])
-        pyramid_left = pyramid_near[:2] + pyramid_far[:2][::-1]
-        pyramid_right = pyramid_near[2:] + pyramid_far[2:][::-1]
 
-        self._render(mvp, self._points_buffer, len(self.point_cloud.points), gl_fig_type=GL.GL_POINTS, color_buffer=self._point_color_buffer)
+        V_inv_pyramid = _to_mat4(cur_track.r_mat, cur_track.t_vec).astype(np.float32)
+        P_pyramid = self._get_projection_matrix(self.tracked_cam_parameters.fov_y,
+                                                self.tracked_cam_parameters.aspect_ratio,
+                                                1, 25)
+        P_inv_pyramid = np.linalg.inv(P_pyramid)
+        gl2cv = np.diag([1, -1, -1, 1])
+        mvp_pyramid = np.dot(mvp, np.dot(np.dot(V_inv_pyramid, gl2cv), P_inv_pyramid))
+
+        for pyramid_face in self._pyramid_faces:
+            self._render(mvp_pyramid, _to_buffer(pyramid_face), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
+
+        self._render(mvp, self._points_buffer, len(self.point_cloud.points), gl_fig_type=GL.GL_POINTS,
+                     color_buffer=self._point_color_buffer)
         self._render(mvp, self._track_points, len(self.tracked_cam_track), gl_fig_type=GL.GL_LINES,
                      color_all=(0.9, 0.9, 0.9))
-
-        self._render(mvp, _to_buffer(pyramid_near), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
-        self._render(mvp, _to_buffer(pyramid_far), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
-        self._render(mvp, _to_buffer(pyramid_left), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
-        self._render(mvp, _to_buffer(pyramid_right), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
-
         self._render(mvp, _to_buffer([cur_track_pos]), 1, gl_fig_type=GL.GL_POINTS, color_all=(0., 0.9, 0.))
 
         GLUT.glutSwapBuffers()
 
     @staticmethod
-    def _get_projection_matrix(fov_y, near, far):
-        w = float(GLUT.glutGet(GLUT.GLUT_WINDOW_WIDTH))
-        h = float(GLUT.glutGet(GLUT.GLUT_WINDOW_HEIGHT))
-        fov_x = fov_y / w * h
+    def _get_projection_matrix(fov_y, aspect, near, far):
+        f_y = 1. / np.tan(fov_y / 2)
+        f_x = f_y / aspect #aspect: w / h
         a = - (far + near) / (far - near)
         b = - 2 * far * near / (far - near)
+        print((f_x, f_y))
 
         return np.asarray([
-            [fov_x, 0, 0, 0],
-            [0, fov_y, 0, 0],
+            [f_x, 0,   0, 0],
+            [0, f_y,   0, 0],
             [0,    0,  a, b],
             [0,    0, -1, 0]
         ])
-
-    def _get_pyramid(self, cur_track, near=1, far=25):
-        fov_y = self.tracked_cam_parameters.fov_y
-        aspect = self.tracked_cam_parameters.aspect_ratio
-        fov_x = fov_y * aspect
-        V_inv = _to_mat4(cur_track.r_mat, cur_track.t_vec).astype(np.float32)
-
-        def get_part(dist):
-            points = []
-            for i, j in [(-1, 1), (-1, -1), (1, -1), (1, 1)]:
-                points.append(dist * np.asarray([i * fov_x, j * fov_y, 1], dtype=np.float32))
-
-            points = [np.append(point, [1.])for point in points]
-            return [np.dot(V_inv, point)[:3] for point in points]
-
-        return get_part(near), get_part(far)
 
     def _render(self, mvp, position_buffer, buf_size, gl_fig_type, color_all=(0., 0., 0.9), color_buffer=None):
         program = self._program_color if (color_buffer is not None) else self._program_uniform_color
