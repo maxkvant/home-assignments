@@ -12,51 +12,31 @@ from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
 import frameseq
 from _camtrack import *
-import math
 import cv2
 import sortednp as snp
-
-
-def rotation_matrix2euler(R):
-    def is_rot_matrix(R):
-        Rt = np.transpose(R)
-        should_be_identity = np.dot(Rt, R)
-        I = np.identity(3, dtype=R.dtype)
-        n = np.linalg.norm(I - should_be_identity)
-        return n < 1e-6
-
-    assert is_rot_matrix(R)
-
-    sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
-
-    singular = sy < 1e-6
-
-    if not singular:
-        x = math.atan2(R[2, 1], R[2, 2])
-        y = math.atan2(-R[2, 0], sy)
-        z = math.atan2(R[1, 0], R[0, 0])
-    else:
-        x = math.atan2(-R[1, 2], R[1, 1])
-        y = math.atan2(-R[2, 0], sy)
-        z = 0
-
-    return np.array([x, y, z])
 
 
 def _find_triangulation(frame_corners_1, frame_corners_2, intrinsic_mat, triangulation_parameters):
     correspondences = build_correspondences(frame_corners_1, frame_corners_2)
     ids, points1, points2 = correspondences
 
-    # TODO check matrix E
-    # H, h_mask = cv2.findHomography(points1, points2, cv2.RANSAC)
+    # H, h_mask = cv2.findHomography(points1, points2, cv2.RANSAC, 5.0, confidence=0.9)
+    # TODO: add criteria
 
     E, e_mask = cv2.findEssentialMat(points1, points2, intrinsic_mat, method=cv2.RANSAC)
-    r1, r2, t = cv2.decomposeEssentialMat(E)
+
+    try:
+        r1, r2, t = cv2.decomposeEssentialMat(E)
+    except:
+        return [], []
 
     max_points_3d = []
     max_ids = []
 
-    possible_poses = [Pose(r1, t), Pose(r1, -t), Pose(r2, t), Pose(r2, -t)]
+    def to_pose(r, t):
+        return Pose(np.linalg.inv(r), np.linalg.inv(r).dot(t))
+
+    possible_poses = [to_pose(r1, t), to_pose(r1, -t), to_pose(r2, t), to_pose(r2, -t)]
     for v, pose in enumerate(possible_poses):
         view_mat_1 = eye3x4()
         view_mat_2 = pose_to_view_mat3x4(pose)
@@ -69,19 +49,19 @@ def _find_triangulation(frame_corners_1, frame_corners_2, intrinsic_mat, triangu
     return max_points_3d, max_ids
 
 
-def _initialize(corner_storage, intrinsic_mat):
+def _initialize(corner_storage, intrinsic_mat, max_reprojection_error, min_depth):
     print(intrinsic_mat)
     n = len(corner_storage)
     assert n > 1
-    angles = [16. / (1.2 ** i) for i in range(20)]
+    angles = [4. / (1.5 ** i) for i in range(4)]
 
     point_clouds = []
 
     for angle in angles:
         triangulation_parameters = TriangulationParameters(
-            max_reprojection_error=2.,
+            max_reprojection_error=max_reprojection_error,
             min_triangulation_angle_deg=angle,
-            min_depth=.5
+            min_depth=min_depth
         )
         max_points_3d = []
         max_ids = []
@@ -95,33 +75,74 @@ def _initialize(corner_storage, intrinsic_mat):
                 max_ids = ids
 
         point_cloud = PointCloudBuilder()
-        point_cloud.add_points(np.asarray(max_ids), np.asarray(max_points_3d))
+        if len(max_points_3d) > 0:
+            point_cloud.add_points(np.asarray(max_ids), np.asarray(max_points_3d))
 
-        print("init trying angle {}: {} points found", angle, len(max_points_3d))
+        print("init trying angle {}: {} points found".format(angle, len(max_points_3d)))
 
         point_clouds.append(point_cloud)
 
-    max_size = np.max([len(cloud.points) for cloud in point_clouds])
+    max_size = np.max([len(cloud.points) for cloud in point_clouds if cloud.points is not None])
 
-    for point_cloud in point_clouds:
+    for point_cloud, angle in zip(point_clouds, angles):
         if len(point_cloud.points) > max_size * 0.7:
-            return point_cloud
+            return point_cloud, angle
 
-    return PointCloudBuilder()
+    return PointCloudBuilder(), 0.
+
+
+def get_new_points(point_cloud, correspondences,
+                   view_mat_1, view_mat_2,
+                   intrinsic_mat, triangulation_parameters,
+                   min_match):
+
+    points_new, ids_new = triangulate_correspondences(correspondences,
+                                                      view_mat_1, view_mat_2, intrinsic_mat,
+                                                      triangulation_parameters)
+    if len(ids_new) < min_match:
+        return [], []
+
+    ids_cloud = point_cloud.ids
+
+    _, (indices_cloud, indices_in_cloud) = snp.intersect(ids_cloud.ravel(), ids_new, indices=True)
+    points_new = np.delete(points_new, indices_in_cloud, axis=0)
+    ids_new = np.delete(ids_new, indices_in_cloud)
+
+    if len(points_new) == 0:
+        return [], []
+
+    def to_homogeneous(points):
+        return np.pad(points, ((0, 0), (0, 1)), 'constant', constant_values=(1,))
+
+    def to_camera_center(view_mat):
+        return np.block([[np.linalg.inv(view_mat[:, :3]), -view_mat[:, 3, np.newaxis]]])
+
+    points_new = [to_camera_center(view_mat_1).dot(point) for point in to_homogeneous(points_new)]
+    return np.asarray(ids_new), np.asarray(points_new)
 
 
 def _track_camera(corner_storage: CornerStorage,
                   intrinsic_mat: np.ndarray) \
         -> Tuple[List[np.ndarray], PointCloudBuilder]:
-    # TODO: implement
     n = len(corner_storage)
     print(n)
     assert n > 1
 
-    point_cloud = _initialize(corner_storage, intrinsic_mat)
+    max_reprojection_error = 4.
+    min_depth = .5
+
+    point_cloud, ok_angle = _initialize(corner_storage, intrinsic_mat, max_reprojection_error, min_depth)
+
+    triangulation_parameters = TriangulationParameters(
+        max_reprojection_error=max_reprojection_error,
+        min_triangulation_angle_deg=ok_angle / 2.0,
+        min_depth=min_depth
+    )
+
+    start_size = len(point_cloud.points)
 
     views = [eye3x4()]
-    for frame_corners in corner_storage[1:]:
+    for i, frame_corners in enumerate(corner_storage[1:], start=1):
         ids_points_2d = frame_corners.ids.flatten()
         ids_points_3d = point_cloud.ids.flatten()
         _, (indices_points_2d, indices_points_3d) = snp.intersect(ids_points_2d, ids_points_3d, indices=True)
@@ -129,10 +150,30 @@ def _track_camera(corner_storage: CornerStorage,
         points_3d = point_cloud.points[indices_points_3d]
         points_2d = frame_corners.points[indices_points_2d]
 
-        pnp_res = cv2.solvePnPRansac(points_3d, points_2d, intrinsic_mat, np.array([]), flags=cv2.SOLVEPNP_EPNP)
-        found, r, t, inliers = pnp_res
-        cur_view = rodrigues_and_translation_to_view_mat3x4(r, t)
+        cur_view = eye3x4()
+        if len(points_3d) > 7:
+            pnp_res = cv2.solvePnPRansac(points_3d, points_2d, intrinsic_mat, np.array([]), flags=cv2.SOLVEPNP_EPNP)
+            found, r, t, inliers = pnp_res
+            cur_view = rodrigues_and_translation_to_view_mat3x4(r, t)
+
         views.append(cur_view)
+
+        new_points = []
+        new_ids = []
+        for j in range(i-3, max(i-100, 0), -3):
+            correspondences = build_correspondences(corner_storage[j], corner_storage[i])
+            cur_points, cur_ids = get_new_points(point_cloud,
+                                                 correspondences,
+                                                 views[j], views[i],
+                                                 intrinsic_mat, triangulation_parameters,
+                                                 min_match=start_size * 0.8)
+            if len(cur_points) > len(new_points):
+                new_points = new_points
+                new_ids = cur_ids
+
+        if len(new_points) > 0:
+            print(i, len(new_points))
+            point_cloud.add_points(new_ids, new_points)
 
     return views, point_cloud
 
