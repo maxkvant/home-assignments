@@ -19,11 +19,16 @@ import sortednp as snp
 def _find_triangulation(frame_corners_1, frame_corners_2, intrinsic_mat, triangulation_parameters):
     correspondences = build_correspondences(frame_corners_1, frame_corners_2)
     ids, points1, points2 = correspondences
+    try:
+        E, e_mask = cv2.findEssentialMat(points1, points2, intrinsic_mat, method=cv2.RANSAC)
 
-    E, e_mask = cv2.findEssentialMat(points1, points2, intrinsic_mat, method=cv2.RANSAC)
+        H, h_mask = cv2.findHomography(points1, points2,
+                                      method=cv2.RANSAC, ransacReprojThreshold=1., confidence=0.99)
+    except:
+      return [], []
 
-    H, h_mask = cv2.findHomography(points1, points2,
-                                  method=cv2.RANSAC, ransacReprojThreshold=1., confidence=0.99)
+    if (E is None) or (e_mask is None) or (H is None) or (h_mask is None):
+        return [], []
 
     mask = e_mask & h_mask
     if np.sum(mask) / np.sum(h_mask) < 0.7:
@@ -104,7 +109,6 @@ def get_new_points(point_cloud, correspondences,
                    view_mat_1, view_mat_2,
                    intrinsic_mat, triangulation_parameters,
                    min_match):
-
     points_new, ids_new = triangulate_correspondences(correspondences,
                                                       view_mat_1, view_mat_2, intrinsic_mat,
                                                       triangulation_parameters)
@@ -166,6 +170,9 @@ def _track_camera(corner_storage: CornerStorage,
 
         for frame_prev in range(max(frame-100, 0), frame, 3):
             correspondences = build_correspondences(corner_storage[frame_prev], corner_storage[frame])
+            ids, _, _ = correspondences
+            if len(ids) <= 3:
+                continue
             cur_ids, cur_points = get_new_points(point_cloud,
                                                  correspondences,
                                                  views[frame_prev], views[frame],
