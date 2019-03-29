@@ -50,32 +50,36 @@ def calculate_gradient(points_3d, points_2d, view_vec, intrinsic_mat):
                                  lambda v: np.sum(_reprojection_errors(points_3d, points_2d, intrinsic_mat @ _vec2view(v)) ** 2) / n,
                                  np.full_like(view_vec, 1e-9)
                       )
+
     # f(x) = (Ax - b)^T * (Ax - b)
     # 1/2 * df / dx = A^T A x - A^T b = A^T * (Ax - b)
-
     reproj_errors = [np.append(reproj_error.reshape(-1), [0]) for reproj_error in reproj_errors]
     points_derivative = [2 * proj_mat.T.dot(reproj_error)[:3] for reproj_error in reproj_errors]
     return view_derivative, np.asarray(points_derivative)
 
 
-def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=2e-8):
+def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=1e-8):
     view_vecs = np.asarray([params.view_vec for params in frames_params])
     points_3d = point_cloud.points[:]
-    best_error = 1e9
-    best_points = points_3d[:]
+
+
+    def compute_errors(points_3d, view_vecs):
+        errors = []
+        for i, params in enumerate(frames_params):
+            errors.append(np.average(
+                compute_reprojection_errors(points_3d[params.ids_3d], params.points_2d, intrinsic_mat @ _vec2view(view_vecs[i]))
+            ))
+        return np.average(errors)
+
+    current_best_error = compute_errors(points_3d, view_vecs)
 
     for iter in range(n_iters):
         gradient_views  = np.zeros(view_vecs.shape, view_vecs.dtype)
         gradient_points = np.zeros(points_3d.shape, points_3d.dtype)
         print(points_3d.shape)
-        errors = []
 
         for i, params in enumerate(frames_params):
             cur_points_3d = points_3d[params.ids_3d]
-
-            errors.append(np.average(
-                compute_reprojection_errors(cur_points_3d, params.points_2d, intrinsic_mat @ _vec2view(view_vecs[i]))
-            ))
 
             view_derivative, points_derivative = calculate_gradient(cur_points_3d, params.points_2d, view_vecs[i], intrinsic_mat)
             gradient_views[i] = view_derivative
@@ -85,18 +89,22 @@ def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=2
                 print(gradient_views[i])
                 print(gradient_points[params.ids_3d][0])
 
-        error_ave = np.average(errors)
-        if error_ave < best_error:
-            best_points = points_3d[:]
-            best_error = error_ave
+        new_view_vecs = view_vecs - alpha * gradient_views
+        new_points_3d = points_3d - alpha * gradient_points
 
-        print("sgd_iter {} error {}".format(iter, error_ave))
-        print()
+        error_ave = compute_errors(new_points_3d, new_view_vecs)
+        print("iter {} error_ave {}".format(iter, error_ave))
 
-        view_vecs -= alpha * gradient_views
-        points_3d -= alpha * gradient_points
+        if error_ave < current_best_error:
+            current_best_error = error_ave
 
-    point_cloud.update_points(point_cloud.ids.flatten(), best_points)
+            view_vecs = new_view_vecs
+            points_3d = new_points_3d
+            alpha *= 1.2
+        else:
+            alpha /= 1.2
+
+    point_cloud.update_points(point_cloud.ids.flatten(), points_3d)
     return view_vecs
 
 
