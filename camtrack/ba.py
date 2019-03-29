@@ -58,9 +58,11 @@ def calculate_gradient(points_3d, points_2d, view_vec, intrinsic_mat):
     return view_derivative, np.asarray(points_derivative)
 
 
-def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=5e-8):
+def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=2e-8):
     view_vecs = np.asarray([params.view_vec for params in frames_params])
     points_3d = point_cloud.points[:]
+    best_error = 1e9
+    best_points = points_3d[:]
 
     for iter in range(n_iters):
         gradient_views  = np.zeros(view_vecs.shape, view_vecs.dtype)
@@ -83,13 +85,18 @@ def optimize_sgd(frames_params, point_cloud, intrinsic_mat, n_iters=100, alpha=5
                 print(gradient_views[i])
                 print(gradient_points[params.ids_3d][0])
 
-        print("sgd_iter {} error {}".format(iter, np.average(errors)))
+        error_ave = np.average(errors)
+        if error_ave < best_error:
+            best_points = points_3d[:]
+            best_error = error_ave
+
+        print("sgd_iter {} error {}".format(iter, error_ave))
         print()
 
         view_vecs -= alpha * gradient_views
         points_3d -= alpha * gradient_points
 
-    point_cloud.update_points(point_cloud.ids.flatten(), points_3d)
+    point_cloud.update_points(point_cloud.ids.flatten(), best_points)
     return view_vecs
 
 
@@ -98,8 +105,6 @@ def run_bundle_adjustment(intrinsic_mat: np.ndarray,
                           max_inlier_reprojection_error: float,
                           view_mats: List[np.ndarray],
                           pc_builder: PointCloudBuilder) -> List[np.ndarray]:
-    # TODO: implement
-    # You may modify pc_builder using 'update_points' method
 
     print("ba max_reproj={} {}".format(max_inlier_reprojection_error, len(pc_builder.ids)))
     n = len(list_of_corners)
