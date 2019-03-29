@@ -40,7 +40,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
     size_default = 20
 
     def get_features(image):
-        return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.1, minDistance=size_default)
+        return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.05, minDistance=size_default)
 
     points = get_features(image_0)
     n = len(points)
@@ -54,8 +54,8 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
     builder.set_corners_at_frame(0, corners)
 
-    lk_params = dict(winSize=(15, 15),
-                     maxLevel=2,
+    lk_params = dict(winSize=(size_default,size_default),
+                     maxLevel=4,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
