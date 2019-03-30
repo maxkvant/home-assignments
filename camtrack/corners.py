@@ -37,13 +37,73 @@ class _CornerStorageBuilder:
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
     image_0 = frame_sequence[0]
+    size_default = 20
+
+    def get_features(image):
+        return cv2.goodFeaturesToTrack(image, maxCorners=100, qualityLevel=0.05, minDistance=size_default)
+
+    points = get_features(image_0)
+    n = len(points)
+    ids = np.arange(n)
+
     corners = FrameCorners(
-        np.array([0]),
-        np.array([[0, 0]]),
-        np.array([55])
+        ids=ids,
+        points=np.array(points),
+        sizes=np.array([size_default] * len(points))
     )
+
     builder.set_corners_at_frame(0, corners)
+
+    lk_params = dict(winSize=(size_default,size_default),
+                     maxLevel=4,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
+        image_0_255 = (image_0 * 255.0).astype(np.uint8)
+        image_1_255 = (image_1 * 255.0).astype(np.uint8)
+        cur_points, status, err = cv2.calcOpticalFlowPyrLK(image_0_255, image_1_255, points, None, **lk_params)
+        points_rev, _, _ = cv2.calcOpticalFlowPyrLK(image_1_255, image_0_255, cur_points, None, **lk_params)
+
+        status = status[:, 0]
+        err = err[:, 0]
+        dist_rev = np.sqrt(np.sum((points - points_rev) ** 2, axis=2)[:,0])
+        points = points[status == 1]
+        status[dist_rev >= 2.0] = 0
+        status[err >= np.median(err) * 4.0] = 0
+
+        for i in range(1, len(points)):
+            point = cur_points[i]
+            min_dist_2 = np.min(np.sum((cur_points[:i, :, :] - point[np.newaxis, :, :]) ** 2, axis=2))
+            if np.sqrt(min_dist_2) <= size_default:
+                status[i] = 0
+
+        points = cur_points[status == 1, :, :]
+        ids = ids[status == 1]
+
+        new_points_candate = get_features(image_1)
+        new_points = []
+
+        for point in new_points_candate:
+            min_dist_2 = np.min(np.sum((points - point[np.newaxis, :, :]) ** 2, axis=2))
+            if np.sqrt(min_dist_2) > size_default:
+                new_points.append(point)
+
+        if new_points:
+            new_points = np.asarray(new_points)
+            new_ids = n + np.arange(len(new_points))
+            n += len(new_points)
+            ids = np.concatenate((ids, new_ids))
+            points = np.concatenate((points, new_points))
+
+        if frame & (frame - 1) == 0: #frame is power two
+            print("frame {}/{}".format(frame, len(frame_sequence)))
+
+        corners = FrameCorners(
+            ids=ids,
+            points=np.array(points),
+            sizes=np.array([size_default] * len(points))
+        )
+
         builder.set_corners_at_frame(frame, corners)
         image_0 = image_1
 

@@ -167,10 +167,10 @@ class CameraTrackRenderer:
         widow_aspect = w / h
 
         V = np.linalg.inv(_to_mat4(camera_rot_mat, camera_tr_vec))
-        M = np.diag([1, -1, -1, 1])
+        gl2cv = cv2gl = np.diag([1, -1, -1, 1])
 
         P = self._get_projection_matrix(camera_fov_y, widow_aspect, 0.01, 100)
-        mvp = np.dot(np.dot(P, V), M)
+        mvp = np.dot(np.dot(P, cv2gl), V)
 
         cur_track = self.tracked_cam_track[tracked_cam_track_pos]
         V_inv_pyramid = _to_mat4(cur_track.r_mat, cur_track.t_vec).astype(np.float32)
@@ -178,8 +178,7 @@ class CameraTrackRenderer:
                                                 self.tracked_cam_parameters.aspect_ratio,
                                                 1, 22)
         P_inv_pyramid = np.linalg.inv(P_pyramid)
-        gl2cv = np.diag([1, -1, -1, 1])
-        mvp_pyramid = np.dot(mvp, np.dot(np.dot(V_inv_pyramid, gl2cv), P_inv_pyramid))
+        mvp_pyramid = np.dot(mvp, np.dot(np.dot(np.dot(V_inv_pyramid, gl2cv), P_inv_pyramid), cv2gl))
 
         for pyramid_face in self._pyramid_faces:
             self._render(mvp_pyramid, _to_buffer(pyramid_face), 4, gl_fig_type=GL.GL_LINE_LOOP, color_all=(0., 0.9, 0.))
